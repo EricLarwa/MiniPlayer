@@ -7,10 +7,11 @@
   "scripts": {
     "build:main": "tsc --project tsconfig.main.json",
     "build:renderer": "vite build",
+    "build:protocols": "echo '{\"protocols\": [{\"name\": \"Spotify Auth Protocol\", \"schemes\": [\"spotify-auth\"]}]}' > protocols.json",
     "build": "npm run build:main && npm run build:renderer && electron-builder",
-    "predeploy": "npm run build",
-    "deploy": "gh-pages -d dist",
-    "dev": "concurrently \"vite\" \"tsc -w --project tsconfig.main.json\" \"electron .\""
+    "dev": "vite",
+    "electron": "electron .",
+    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && npm run electron\""
   },
   "build": {
     "mac": {

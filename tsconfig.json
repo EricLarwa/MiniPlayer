@@ -1,29 +1,18 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
-    "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "target": "ESNext",
     "module": "ESNext",
-    "skipLibCheck": true,
-    "noEmitOnError": false,
-
-    "moduleResolution": "bundler",
-    "resolveJsonModule": true,
-    "allowImportingTsExtensions": true,
-    "emitDeclarationOnly": true,
-    "composite": true,
-    "isolatedModules": true,
     "jsx": "react-jsx",
+    "strict": true,
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
     "allowJs": true,
-
-    "strict": false,
+    "sourceMap": true,
+    "baseUrl": ".",
     "paths": {
-      "@/*": ["./renderer/src/*"]
+      "@/*": ["src/renderer/*"]
     }
   },
-  "include": ["renderer/src"],
-  "exclude": ["renderer/src/tempobook"],
-  "references": [{
-    "path": "./tsconfig.node.json",
-    }]
+  "include": ["src/renderer/**/*"]
 }

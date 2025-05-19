@@ -1,6 +1,8 @@
 {
   "name": "miniplayer",
   "version": "1.0.0",
+  "author": "Eric Larwa | ericlarwa@gmail.com",
+  "description": "A mini player for your music",
   "main": "src/dist/main.js",
   "scripts": {
     "build:main": "tsc --project tsconfig.main.json",

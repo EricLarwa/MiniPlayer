@@ -18,11 +18,11 @@
 
     "strict": false,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./renderer/src/*"]
     }
   },
-  "include": ["src"],
-  "exclude": ["src/tempobook"],
+  "include": ["renderer/src"],
+  "exclude": ["renderer/src/tempobook"],
   "references": [{
     "path": "./tsconfig.node.json",
     }]

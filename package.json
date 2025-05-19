@@ -1,11 +1,12 @@
 {
   "name": "miniplayer",
-  "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
+  "main": "main.ts",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev": "concurrently \"vite\" \"electron-tsc && electron .\"",
+    "build": "vite build && electron-builder",
+    "start": "electron .",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -21,9 +22,12 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.25.0",
+    "@types/electron": "^1.4.38",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@vitejs/plugin-react": "^4.4.1",
+    "electron": "^36.2.1",
+    "electron-builder": "^24.0.0",
     "eslint": "^9.25.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.19",

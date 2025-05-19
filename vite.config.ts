@@ -4,6 +4,7 @@ import path from 'path'
 
 export default defineConfig({
   root: path.resolve(__dirname, 'src/renderer'), // 👈 Set root to where index.html is
+  base:'https://ericlarwa.github.io/MiniPlayer/',
   plugins: [react()],
   build: {
     outDir: path.resolve(__dirname, 'dist/renderer'), // output directory

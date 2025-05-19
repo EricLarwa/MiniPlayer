@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { generateCodeVerifier, generateCodeChallenge } from '../utils/pkce'; 
 
-const CLIENT_ID = 'your_spotify_client_id';
-const REDIRECT_URI = 'http://localhost:3000';
+const CLIENT_ID = '2fa7700ed8e74c21945bf239c53330e1';
+const REDIRECT_URI = 'http://127.0.0.1:5173/callback'; // Update for Vercel or Electron build
 const SCOPES = 'user-read-currently-playing user-read-playback-state';
 
 const genreToImage: Record<string, string> = {
@@ -23,7 +24,7 @@ const genreToImage: Record<string, string> = {
 const resolveGenreImage = (genres: string[]): string => {
   for (const genre of genres) {
     for (const key in genreToImage) {
-      if (genre.includes(key)) return genreToImage[key];
+      if (genre.toLowerCase().includes(key)) return genreToImage[key];
     }
   }
   return genreToImage.default;
@@ -33,22 +34,35 @@ export default function SpotifyNowPlaying() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [backgroundImage, setBackgroundImage] = useState<string>(genreToImage.default);
 
-  // Handle auth redirect
   useEffect(() => {
-    const hash = window.location.hash;
-    if (!accessToken && hash) {
-      const token = new URLSearchParams(hash.substring(1)).get('access_token');
-      if (token) {
-        setAccessToken(token);
-        window.history.replaceState(null, '', window.location.pathname); // clean up URL
-      }
-    }
-  }, [accessToken]);
+    const code = new URLSearchParams(window.location.search).get('code');
+    const storedVerifier = localStorage.getItem('verifier');
 
-  // Fetch currently playing track
+    if (code && storedVerifier) {
+      fetch('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: CLIENT_ID,
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: REDIRECT_URI,
+          code_verifier: storedVerifier,
+        }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          setAccessToken(data.access_token);
+          localStorage.removeItem('verifier');
+          window.history.replaceState(null, '', '/');
+        });
+    }
+  }, []);
+
   useEffect(() => {
     const fetchCurrentlyPlaying = async () => {
       if (!accessToken) return;
+
       const trackRes = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
@@ -64,7 +78,7 @@ export default function SpotifyNowPlaying() {
       if (!artistRes.ok) return;
 
       const artistData = await artistRes.json();
-      const genres = artistData.genres;
+      const genres: string[] = artistData.genres;
       const bg = resolveGenreImage(genres);
       setBackgroundImage(bg);
     };
@@ -72,11 +86,21 @@ export default function SpotifyNowPlaying() {
     fetchCurrentlyPlaying();
   }, [accessToken]);
 
-  const handleLogin = () => {
-    const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(
-      REDIRECT_URI
-    )}&scope=${encodeURIComponent(SCOPES)}`;
-    window.location.href = authUrl;
+  const handleLogin = async () => {
+    const verifier = generateCodeVerifier();
+    const challenge = await generateCodeChallenge(verifier);
+    localStorage.setItem('verifier', verifier);
+
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id: CLIENT_ID,
+      scope: SCOPES,
+      redirect_uri: REDIRECT_URI,
+      code_challenge_method: 'S256',
+      code_challenge: challenge,
+    });
+
+    window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
   };
 
   return (
@@ -86,12 +110,29 @@ export default function SpotifyNowPlaying() {
         backgroundSize: 'cover',
         backgroundPosition: 'center',
         minHeight: '100vh',
+        color: 'white',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
       }}
     >
-      {!accessToken && (
-        <button onClick={handleLogin} style={{ padding: '1rem', fontSize: '1.2rem' }}>
+      {!accessToken ? (
+        <button
+          onClick={handleLogin}
+          style={{
+            padding: '1rem 2rem',
+            fontSize: '1.2rem',
+            borderRadius: '8px',
+            backgroundColor: '#1DB954',
+            color: '#fff',
+            border: 'none',
+            cursor: 'pointer',
+          }}
+        >
           Connect to Spotify
         </button>
+      ) : (
+        <div>🎧 Connected! Fetching genre background...</div>
       )}
     </div>
   );

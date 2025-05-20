@@ -40,100 +40,56 @@ const resolveGenreImage = (genres: string[]): string => {
   return genreToImage.default;
 };
 
-export default function SpotifyNowPlaying() {
+export default function NowPlaying() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [backgroundImage, setBackgroundImage] = useState<string>(genreToImage.default);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [currentTrack, setCurrentTrack] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [redirectUri, setRedirectUri] = useState<string>('');
-  const query = new URLSearchParams(window.location.search);
-  const [code, setCode] = useState<string | null>(null);
 
-  // Get the redirect URI 
+  // Initialize redirect URI
   useEffect(() => {
-  const getRedirectUri = async () => {
-    if (IS_ELECTRON) {
-      try {
-        const uri = 'http://127.0.0.1:8888/callback';
-        console.log('Setting redirect URI (Electron):', uri);
-        setRedirectUri(uri);
-      } catch (err) {
-        console.error('Error getting redirect URI:', err);
-        setRedirectUri('http://127.0.0.1:8888/callback');
-      }
-    } else {
-      const uri = 'http://127.0.0.1:8888/callback';
-      console.log('Setting redirect URI (Browser):', uri);
-      setRedirectUri(uri);
-    }
-  };
-
-  getRedirectUri();
-}, []);
-
-  useEffect(() => {
-    if (code && redirectUri) {
-      console.log('Both code and redirect URI are ready. Redirect URI:', redirectUri);
-      exchangeCodeForToken(code);
-    }
-  }, [code, redirectUri]);
-
-
-  useEffect(() => {
-    if (code && redirectUri) {
-      console.log('Both code and redirect URI available, starting token exchange...');
-      exchangeCodeForToken(code);
-    }
-  }, [code, redirectUri]);
-
-
-  // Set up listener for auth callback from main process
-    useEffect(() => {
-      if (IS_ELECTRON && (window as any).electron?.ipcRenderer) {
-        console.log('Setting up auth-callback listener');
-        const ipc = (window as any).electron.ipcRenderer;
-
-        const handler = (_event: any, authCode: string) => {
-          console.log('Received auth callback with code');
-          setCode(authCode); // ✅ store the code
-        };
-
-        ipc.on('auth-callback', handler);
-
-        return () => ipc.removeListener('auth-callback', handler);
-      }
-    }, []);
-
-
-  // Handle browser URL params for non-Electron mode
-  useEffect(() => {
-    if (!IS_ELECTRON) {
-      const urlParams = new URLSearchParams(window.location.search);
-      const code = urlParams.get('code');
-      
-      if (code) {
-        console.log('Found code in URL parameters');
-        exchangeCodeForToken(code);
-        // Clean up URL
-        window.history.replaceState({}, document.title, window.location.pathname);
-      }
-    }
+    const uri = 'http://127.0.0.1:8888/callback';
+    console.log('Setting redirect URI:', IS_ELECTRON ? '(Electron)' : '(Browser)', uri);
+    setRedirectUri(uri);
   }, []);
 
+  // Handle auth code from Electron IPC
   useEffect(() => {
-  const query = new URLSearchParams(window.location.search);
-  const authCode = query.get('code');
-  if (authCode) {
-    console.log('Extracted code from URL:', authCode);
-    setCode(authCode);
-  }
-  }, []);
+    if (!IS_ELECTRON || !window.electron?.ipcRenderer) return;
+    
+    console.log('Setting up auth-callback listener');
+    const ipc = window.electron.ipcRenderer;
 
+    const handleAuthCallback = (_event: any, authCode: string) => {
+      console.log('Received auth callback with code from IPC');
+      if (authCode) {
+        exchangeCodeForToken(authCode);
+      }
+    };
+
+    ipc.on('auth-callback', handleAuthCallback);
+    return () => ipc.removeListener('auth-callback', handleAuthCallback);
+  }, [redirectUri]); // Re-setup when redirectUri changes
+
+  // Listen for messages from the callback window
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // Validate message structure
+      if (event.data && event.data.type === 'spotify-auth' && event.data.code) {
+        console.log('Received auth code from message event:', event.data.code);
+        exchangeCodeForToken(event.data.code);
+      }
+    };
+    
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [redirectUri]);
 
   // Exchange authorization code for access token
   const exchangeCodeForToken = async (code: string) => {
-    console.log('In exchangeCodeForToken, redirectUri:', redirectUri);
+    console.log('Exchanging code for token, redirectUri:', redirectUri);
     if (!redirectUri) {
       setError('Redirect URI not set');
       return;
@@ -150,29 +106,31 @@ export default function SpotifyNowPlaying() {
     }
     
     try {
-      console.log('Exchanging code for token using redirect URI:', redirectUri);
+      const tokenParams = {
+        client_id: CLIENT_ID,
+        grant_type: 'authorization_code',
+        code: code,
+        redirect_uri: redirectUri,
+        code_verifier: storedVerifier,
+      };
+      
+      console.log('Token request params:', { ...tokenParams, code_verifier: '[REDACTED]' });
       
       const response = await fetch('https://accounts.spotify.com/api/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: CLIENT_ID,
-          grant_type: 'authorization_code',
-          code,
-          redirect_uri: redirectUri,
-          code_verifier: storedVerifier,
-        }),
+        body: new URLSearchParams(tokenParams),
       });
       
       const data = await response.json();
       
-      if (data.error) {
-        throw new Error(data.error_description || 'Failed to get access token');
+      if (!response.ok || data.error) {
+        throw new Error(data.error_description || `Failed with status ${response.status}`);
       }
       
       console.log('Successfully obtained access token');
       setAccessToken(data.access_token);
-      localStorage.removeItem('verifier');
+      localStorage.removeItem('verifier'); // Clean up
     } catch (err) {
       console.error('Token exchange error:', err);
       setError(`Authentication error: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -183,10 +141,11 @@ export default function SpotifyNowPlaying() {
 
   // Fetch currently playing track and artist info
   useEffect(() => {
+    if (!accessToken) return;
+    
     const fetchCurrentlyPlaying = async () => {
-      if (!accessToken) return;
-
       try {
+        console.log('Fetching currently playing track...');
         // Get currently playing track
         const trackRes = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
           headers: { Authorization: `Bearer ${accessToken}` },
@@ -203,24 +162,24 @@ export default function SpotifyNowPlaying() {
             throw new Error(`API error: ${trackRes.status}`);
           }
           
-          // 204 means no track is playing
           setCurrentTrack(null);
           return;
         }
 
-        // If no content (204), no track is playing
         if (trackRes.status === 204) {
+          console.log('No track currently playing');
           setCurrentTrack(null);
           return;
         }
 
         const trackData = await trackRes.json();
+        console.log('Current track:', trackData?.item?.name);
         setCurrentTrack(trackData);
         
         const artistId = trackData?.item?.artists?.[0]?.id;
         if (!artistId) return;
 
-        // Get artist details including genres
+        // Get artist details 
         const artistRes = await fetch(`https://api.spotify.com/v1/artists/${artistId}`, {
           headers: { Authorization: `Bearer ${accessToken}` },
         });
@@ -231,6 +190,7 @@ export default function SpotifyNowPlaying() {
 
         const artistData = await artistRes.json();
         const genres: string[] = artistData.genres || [];
+        console.log('Artist genres:', genres);
         const bg = resolveGenreImage(genres);
         setBackgroundImage(bg);
       } catch (err) {
@@ -238,15 +198,12 @@ export default function SpotifyNowPlaying() {
       }
     };
 
-    if (accessToken) {
-      fetchCurrentlyPlaying();
-      // Set up periodic refresh
-      const interval = setInterval(fetchCurrentlyPlaying, 30000); // every 30 seconds
-      return () => clearInterval(interval);
-    }
+    fetchCurrentlyPlaying();
+    // Set up periodic refresh
+    const interval = setInterval(fetchCurrentlyPlaying, 30000); // every 30 seconds
+    return () => clearInterval(interval);
   }, [accessToken]);
 
-  // Handle login button click
   const handleLogin = async () => {
     if (!redirectUri) {
       setError('Redirect URI not set. Please try again in a moment.');
@@ -271,25 +228,19 @@ export default function SpotifyNowPlaying() {
       });
 
       const authUrl = `https://accounts.spotify.com/authorize?${params.toString()}`;
-      
-      if (IS_ELECTRON) {
-        try {
-          // Use IPC to tell main process to open the auth URL
-          const electron = (window as any).require ? (window as any).require('electron') : window.electron;
-          if (electron?.ipcRenderer) {
-            electron.ipcRenderer.send('start-auth', authUrl);
-          } else {
-            // Fallback to opening in the same window
-            window.location.href = authUrl;
-          }
-        } catch (err) {
-          console.error('Error starting auth in Electron:', err);
-          window.open(authUrl, '_blank');
-        }
-      } else {
-        // In browser, open in the same window
-        window.location.href = authUrl;
-      }
+      console.log('Authorization URL created:', authUrl);
+      const width = 450;
+      const height = 730;
+      const left = window.screen.width / 2 - width / 2;
+      const top = window.screen.height / 2 - height / 2;
+
+      window.open(
+        authUrl,
+        'Spotify Auth',
+        `width=${width},height=${height},top=${top},left=${left}`
+      );
+
+      console.log('Auth popup opened');
     } catch (err) {
       console.error('Login error:', err);
       setError(`Login error: ${err instanceof Error ? err.message : 'Unknown error'}`);

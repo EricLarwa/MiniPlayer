@@ -4,6 +4,20 @@ import { URL } from 'url';
 import * as path from 'path';
 import * as fs from 'fs';
 
+ipcMain.on('open-auth-popup', (event, authUrl) => {
+  const authWindow = new BrowserWindow({
+    width: 450,
+    height: 730,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  });
+
+  authWindow.loadURL(authUrl);
+});
+
+
 let mainWindow: BrowserWindow | null = null;
 
 // Debug logging function

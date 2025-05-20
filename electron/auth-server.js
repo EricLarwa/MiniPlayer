@@ -1,169 +1,173 @@
-const http = require('http');
-const url = require('url');
+// auth-server.js - Simple server to handle OAuth callbacks
+const { createServer } = require('http');
+const { parse } = require('url');
+const port = 8888;
 
-class AuthServer {
-  constructor(port = 8888) {
-    this.port = port;
-    this.server = null;
-    this.authCallback = null;
-  }
-  
-  start(callback) {
-    if (this.server) {
-      return; // Already running
-    }
-    
-    this.authCallback = callback;
-    
-    this.server = http.createServer((req, res) => {
-      // Set CORS headers to allow Spotify to redirect here
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Request-Method', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'OPTIONS, GET');
-      res.setHeader('Access-Control-Allow-Headers', '*');
-      
-      // Parse the URL
-      const parsedUrl = url.parse(req.url, true);
-      const pathname = parsedUrl.pathname;
-      
-      console.log(`[AuthServer] Received request: ${pathname}`);
-      
-      // Handle the callback from Spotify
-      if (pathname === '/callback') {
-        const code = parsedUrl.query.code;
-        const error = parsedUrl.query.error;
-        
-        if (code) {
-          console.log('[AuthServer] Received auth code');
-          
-          // Send success HTML
-          res.writeHead(200, { 'Content-Type': 'text/html' });
-          res.end(`
-            <!DOCTYPE html>
-            <html>
-              <head>
-                <title>Authentication Successful</title>
-                <style>
-                  body { 
-                    font-family: Arial, sans-serif; 
-                    text-align: center; 
-                    padding-top: 50px;
-                    background-color: #121212;
-                    color: white;
-                  }
-                  .success { 
-                    color: #1DB954; 
-                    font-size: 48px;
-                  }
-                  .message {
-                    margin: 20px;
-                    font-size: 16px;
-                  }
-                  .container {
-                    max-width: 500px;
-                    margin: 0 auto;
-                    padding: 20px;
-                    background-color: #282828;
-                    border-radius: 8px;
-                  }
-                </style>
-              </head>
-              <body>
-                <div class="container">
-                  <div class="success">✓</div>
-                  <h1>Authentication Successful!</h1>
-                  <p class="message">You can close this window and return to the application.</p>
-                </div>
-                <script>
-                  // Close this window after 3 seconds if it was opened by the app
-                  setTimeout(() => {
-                    window.close();
-                  }, 3000);
-                </script>
-              </body>
-            </html>
-          `);
-          
-          // Pass the code to the callback
-          if (this.authCallback) {
-            this.authCallback(code);
-          }
-        } else if (error) {
-          console.error('[AuthServer] Authentication error:', error);
-          
-          // Send error HTML
-          res.writeHead(400, { 'Content-Type': 'text/html' });
-          res.end(`
-            <!DOCTYPE html>
-            <html>
-              <head>
-                <title>Authentication Failed</title>
-                <style>
-                  body { 
-                    font-family: Arial, sans-serif; 
-                    text-align: center; 
-                    padding-top: 50px;
-                    background-color: #121212;
-                    color: white;
-                  }
-                  .error { 
-                    color: #e22134; 
-                    font-size: 48px;
-                  }
-                  .message {
-                    margin: 20px;
-                    font-size: 16px;
-                  }
-                  .container {
-                    max-width: 500px;
-                    margin: 0 auto;
-                    padding: 20px;
-                    background-color: #282828;
-                    border-radius: 8px;
-                  }
-                </style>
-              </head>
-              <body>
-                <div class="container">
-                  <div class="error">✗</div>
-                  <h1>Authentication Failed</h1>
-                  <p class="message">Error: ${error}</p>
-                  <p>Please close this window and try again.</p>
-                </div>
-              </body>
-            </html>
-          `);
-        } else {
-          res.writeHead(400, { 'Content-Type': 'text/plain' });
-          res.end('Invalid request');
-        }
-      } else {
-        // Send a basic response for other endpoints
-        res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end('Spotify Auth Server is running');
-      }
-    });
-    
-    this.server.listen(this.port, () => {
-      console.log(`[AuthServer] Server running at http://127.0.0.1:${this.port}/`);
-    });
-    
-    this.server.on('error', (err) => {
-      console.error('[AuthServer] Server error:', err);
-    });
-  }
-  
-  stop() {
-    if (this.server) {
-      this.server.close();
-      this.server = null;
-      console.log('[AuthServer] Server stopped');
-    }
-  }
-  
-  getRedirectUri() {
-    return `http://127.0.0.1:${this.port}/callback`;
-  }
-}
+console.log(`Starting callback server on port ${port}...`);
 
-module.exports = { AuthServer };
+const server = createServer((req, res) => {
+  const parsedUrl = parse(req.url, true);
+  const { pathname, query } = parsedUrl;
+  
+  console.log(`Received request for ${pathname}`);
+  
+  // Handle the callback from Spotify
+  if (pathname === '/callback') {
+    console.log('Callback received with query:', query);
+    
+    if (query.code) {
+      console.log('Authorization code received:', query.code);
+      
+      // Send a success response
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Authentication Successful</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              text-align: center;
+              margin-top: 50px;
+              background-color: #f5f5f5;
+            }
+            .container {
+              background-color: white;
+              border-radius: 8px;
+              box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+              padding: 30px;
+              max-width: 500px;
+              margin: 0 auto;
+            }
+            h1 {
+              color: #1DB954; /* Spotify green */
+            }
+            p {
+              margin: 20px 0;
+            }
+            .button {
+              background-color: #1DB954;
+              color: white;
+              border: none;
+              padding: 10px 20px;
+              border-radius: 24px;
+              font-size: 14px;
+              cursor: pointer;
+              margin-top: 20px;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>Authentication Successful!</h1>
+            <p>You have successfully authenticated with Spotify.</p>
+            <p>You can close this window and return to the application.</p>
+            <p><strong>Authorization code:</strong> ${query.code}</p>
+            <button class="button" onclick="window.close()">Close Window</button>
+          </div>
+          <script>
+            // Try to communicate with the opener window if possible
+            if (window.opener) {
+              try {
+                window.opener.postMessage({ type: 'spotify-auth', code: '${query.code}' }, '*');
+              } catch (err) {
+                console.error('Could not send message to opener:', err);
+              }
+            }
+          </script>
+        </body>
+        </html>
+      `);
+    } else if (query.error) {
+      console.log('Authentication error:', query.error);
+      
+      // Send an error response
+      res.writeHead(400, { 'Content-Type': 'text/html' });
+      res.end(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Authentication Failed</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              text-align: center;
+              margin-top: 50px;
+              background-color: #f5f5f5;
+            }
+            .container {
+              background-color: white;
+              border-radius: 8px;
+              box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+              padding: 30px;
+              max-width: 500px;
+              margin: 0 auto;
+            }
+            h1 {
+              color: #e74c3c; /* Error red */
+            }
+            p {
+              margin: 20px 0;
+            }
+            .button {
+              background-color: #1DB954;
+              color: white;
+              border: none;
+              padding: 10px 20px;
+              border-radius: 24px;
+              font-size: 14px;
+              cursor: pointer;
+              margin-top: 20px;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>Authentication Failed</h1>
+            <p>There was an error authenticating with Spotify: ${query.error}</p>
+            <p>Please try again.</p>
+            <button class="button" onclick="window.close()">Close Window</button>
+          </div>
+        </body>
+        </html>
+      `);
+    } else {
+      // Send a generic response for other callback scenarios
+      res.writeHead(400, { 'Content-Type': 'text/html' });
+      res.end(`
+        <!DOCTYPE html>
+        <html>
+        <body>
+          <h1>Invalid callback request</h1>
+          <p>Missing required parameters.</p>
+        </body>
+        </html>
+      `);
+    }
+  } else {
+    // Handle other paths
+    res.writeHead(404, { 'Content-Type': 'text/html' });
+    res.end(`
+      <!DOCTYPE html>
+      <html>
+      <body>
+        <h1>404 Not Found</h1>
+        <p>The requested URL ${pathname} was not found on this server.</p>
+      </body>
+      </html>
+    `);
+  }
+});
+
+server.listen(port, () => {
+  console.log(`Server running at http://localhost:${port}/`);
+});
+
+server.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') {
+    console.error(`Port ${port} is already in use. Is the server already running?`);
+  } else {
+    console.error('Server error:', e);
+  }
+});

@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { generateCodeVerifier, generateCodeChallenge } from '../utils/pkce';
 
-
 declare global {
   interface ElectronAPI {
     openAuthPopup?: (url: string) => void;
@@ -18,15 +17,14 @@ declare global {
 
 const CLIENT_ID = '2fa7700ed8e74c21945bf239c53330e1';
 const SCOPES = 'user-read-currently-playing user-read-playback-state';
+const VERIFIER_KEY = 'spotify_verifier'; 
 
 // Detect if we're running in electronAPI
 const isElectron = () => {
   return typeof window !== 'undefined' && !!window.electronAPI;
 };
 
-// Remove this block from the top-level scope. The Electron environment check is handled inside handleLogin.
-
-// Genre to image mapping
+// Genre to image mapping - preserving this as requested
 const genreToImage: Record<string, string> = {
   alternative: '/assets/imgs/alternative.jpg',
   country: '/assets/imgs/country.jpg',
@@ -43,6 +41,7 @@ const genreToImage: Record<string, string> = {
   rap: '/assets/imgs/rapc.jpg',
 };
 
+// Preserving resolveGenreImage as requested
 const resolveGenreImage = (genres: string[]): string => {
   for (const genre of genres) {
     for (const key in genreToImage) {
@@ -52,76 +51,48 @@ const resolveGenreImage = (genres: string[]): string => {
   return genreToImage.default;
 };
 
+interface SpotifyTokenResponse {
+  access_token: string;
+  token_type: string;
+  scope: string;
+  expires_in: number;
+  refresh_token: string;
+  error?: string;
+  error_description?: string;
+}
+
 export default function NowPlaying() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [backgroundImage, setBackgroundImage] = useState<string>(genreToImage.default);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(true); // Start with loading state
   const [currentTrack, setCurrentTrack] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [redirectUri, setRedirectUri] = useState<string>('');
 
-  // Initialize redirect URI
   useEffect(() => {
     const uri = 'http://127.0.0.1:8888/callback';
     console.log('Setting redirect URI:', isElectron() ? '(Electron)' : '(Browser)', uri);
     setRedirectUri(uri);
+    
+    // End initial loading state after a short delay
+    setTimeout(() => setIsLoading(false), 500);
   }, []);
 
-  // Handle auth code from Electron IPC
-  useEffect(() => {
-  if (!isElectron || !window.electron?.ipcRenderer) return;
-
-  console.log('Setting up auth-callback listener');
-  const ipc = window.electron.ipcRenderer;
-
-  const handleAuthCallback = (_event: any, authCode: string) => {
-    console.log('Received auth callback with code from IPC');
-    if (authCode) {
-      exchangeCodeForToken(authCode);
-    }
-  };
-
-  // Use the cleanup function returned by ipc.on
-  const removeListener = ipc.on('auth-callback', handleAuthCallback);
-  
-  return () => {
-    // Call the removeListener function directly
-    if (removeListener && typeof removeListener === 'function') {
-      removeListener();
-    }
-  };
-}, [redirectUri]);
-
-  // Listen for messages from the callback window
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      // Validate message structure
-      if (event.data && event.data.type === 'spotify-auth' && event.data.code) {
-        console.log('Received auth code from message event:', event.data.code);
-        exchangeCodeForToken(event.data.code);
-      }
-    };
-    
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [redirectUri]);
-
   // Exchange authorization code for access token
-  const exchangeCodeForToken = async (code: string) => {
-    console.log('Exchanging code for token, redirectUri:', redirectUri);
-    if (!redirectUri) {
-      setError('Redirect URI not set');
-      return;
-    }
-    
+  const exchangeCodeForToken = async (code: string): Promise<string> => {
+    console.log('Exchanging code for token, code length:', code.length);
     setIsLoading(true);
     setError(null);
     
-    const storedVerifier = localStorage.getItem('verifier');
+    const storedVerifier = localStorage.getItem(VERIFIER_KEY);
+    console.log('PKCE verifier found:', storedVerifier ? 'Yes' : 'No');
+    
     if (!storedVerifier) {
-      setError('PKCE verifier not found');
+      const errorMsg = 'PKCE verifier not found';
+      console.error(errorMsg);
+      setError(errorMsg);
       setIsLoading(false);
-      return;
+      throw new Error(errorMsg);
     }
     
     try {
@@ -133,7 +104,11 @@ export default function NowPlaying() {
         code_verifier: storedVerifier,
       };
       
-      console.log('Token request params:', { ...tokenParams, code_verifier: '[REDACTED]' });
+      console.log('Token request params:', { 
+        ...tokenParams, 
+        code: code.substring(0, 5) + '...', 
+        code_verifier: storedVerifier.substring(0, 5) + '...' 
+      });
       
       const response = await fetch('https://accounts.spotify.com/api/token', {
         method: 'POST',
@@ -141,89 +116,149 @@ export default function NowPlaying() {
         body: new URLSearchParams(tokenParams),
       });
       
+      console.log('Token response status:', response.status);
       const data = await response.json();
+      console.log('Token response data structure:', Object.keys(data));
       
       if (!response.ok || data.error) {
+        console.error('Token exchange failed:', data);
         throw new Error(data.error_description || `Failed with status ${response.status}`);
       }
       
-      console.log('Successfully obtained access token');
+      console.log('Successfully obtained access token, expires in:', data.expires_in);
+      
+      // Store token info
+      localStorage.setItem('spotify_access_token', data.access_token);
+      localStorage.setItem('spotify_refresh_token', data.refresh_token);
+      localStorage.setItem('spotify_token_expiry', (Date.now() + data.expires_in * 1000).toString());
+      
       setAccessToken(data.access_token);
-      localStorage.removeItem('verifier'); // Clean up
+      localStorage.removeItem(VERIFIER_KEY); // Clean up
+      return data.access_token;
     } catch (err) {
       console.error('Token exchange error:', err);
-      setError(`Authentication error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      const errorMsg = `Authentication error: ${err instanceof Error ? err.message : 'Unknown error'}`;
+      setError(errorMsg);
+      throw err;
     } finally {
       setIsLoading(false);
     }
   };
 
   // Fetch currently playing track and artist info
-  useEffect(() => {
-    if (!accessToken) return;
+  const getCurrentTrack = async (token: string) => {
+    if (!token) {
+      console.error('No token provided to getCurrentTrack');
+      return;
+    }
     
-    const fetchCurrentlyPlaying = async () => {
-      try {
-        console.log('Fetching currently playing track...');
-        // Get currently playing track
-        const trackRes = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
-        
-        if (!trackRes.ok) {
-          if (trackRes.status === 401) {
-            setError('Token expired. Please login again.');
-            setAccessToken(null);
-            return;
-          }
-          
-          if (trackRes.status !== 204) {
-            throw new Error(`API error: ${trackRes.status}`);
-          }
-          
-          setCurrentTrack(null);
-          return;
+    try {
+      const response = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
+        headers: {
+          'Authorization': `Bearer ${token}`
         }
-
-        if (trackRes.status === 204) {
-          console.log('No track currently playing');
-          setCurrentTrack(null);
-          return;
-        }
-
-        const trackData = await trackRes.json();
-        console.log('Current track:', trackData?.item?.name);
-        setCurrentTrack(trackData);
-        
-        const artistId = trackData?.item?.artists?.[0]?.id;
-        if (!artistId) return;
-
-        // Get artist details 
-        const artistRes = await fetch(`https://api.spotify.com/v1/artists/${artistId}`, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
-        
-        if (!artistRes.ok) {
-          throw new Error(`Artist API error: ${artistRes.status}`);
-        }
-
-        const artistData = await artistRes.json();
-        const genres: string[] = artistData.genres || [];
-        console.log('Artist genres:', genres);
-        const bg = resolveGenreImage(genres);
-        setBackgroundImage(bg);
-      } catch (err) {
-        console.error('Error fetching music data:', err);
+      });
+      
+      if (response.status === 204) {
+        console.log('No track currently playing');
+        setCurrentTrack(null);
+        return;
       }
-    };
+      
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log('Track data received');
+      
+      // Update background image if artist genres are available
+      if (data.item?.artists?.length > 0) {
+        try {
+          const artistResponse = await fetch(`https://api.spotify.com/v1/artists/${data.item.artists[0].id}`, {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          });
+          
+          if (artistResponse.ok) {
+            const artistData = await artistResponse.json();
+            if (artistData.genres && artistData.genres.length > 0) {
+              const backgroundImg = resolveGenreImage(artistData.genres);
+              setBackgroundImage(backgroundImg);
+              console.log('Background image set based on artist genre:', backgroundImg);
+            }
+            console.log("Genres:", artistData.genres)
+          }
+          console.log('Artist data fetched successfully');
+        } catch (artistError) {
+          console.error('Failed to fetch artist data:');
+        }
+      }
+      
+      setCurrentTrack(data);
+    } catch (error) {
+      console.error('Failed to fetch current track:', error);
+      if (error instanceof Error && error.message.includes('401')) {
+        // Token expired, try to refresh
+        refreshToken();
+      }
+    }
+  };
 
-    fetchCurrentlyPlaying();
-    // Set up periodic refresh
-    const interval = setInterval(fetchCurrentlyPlaying, 30000); // every 30 seconds
-    return () => clearInterval(interval);
-  }, [accessToken]);
+  // Refresh the Spotify access token using the stored refresh token
+  const refreshToken = async () => {
+    const refresh_token = localStorage.getItem('spotify_refresh_token');
+    if (!refresh_token) {
+      setError('No refresh token available. Please login again.');
+      setAccessToken(null);
+      return;
+    }
+  
+    setIsLoading(true);
+    
+    try {
+      const params = new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token,
+        client_id: CLIENT_ID,
+      });
+  
+      const response = await fetch('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params,
+      });
+  
+      const data = await response.json();
+  
+      if (!response.ok || data.error) {
+        throw new Error(data.error_description || `Failed with status ${response.status}`);
+      }
+  
+      console.log('Successfully refreshed token');
+      
+      localStorage.setItem('spotify_access_token', data.access_token);
+      localStorage.setItem('spotify_token_expiry', (Date.now() + data.expires_in * 1000).toString());
+      setAccessToken(data.access_token);
 
-  // NowPlaying.tsx
+      // Update the refresh token if Spotify returns a new one
+      if (data.refresh_token) {
+        localStorage.setItem('spotify_refresh_token', data.refresh_token);
+      }
+  
+      // Fetch the current track with the new token
+      getCurrentTrack(data.access_token);
+    } catch (err) {
+      console.error('Token refresh error:', err);
+      setError(`Failed to refresh token: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      setAccessToken(null);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle login
   const handleLogin = async () => {
     if (!isElectron()) {
       setError('Electron environment not detected. Cannot proceed with login.');
@@ -239,9 +274,13 @@ export default function NowPlaying() {
     setError(null);
 
     try {
+      // Clear any previous verifier
+      localStorage.removeItem(VERIFIER_KEY);
+      
       const verifier = generateCodeVerifier();
       const challenge = await generateCodeChallenge(verifier);
-      localStorage.setItem('verifier', verifier);
+      localStorage.setItem(VERIFIER_KEY, verifier);
+      console.log('Generated new PKCE verifier, length:', verifier.length);
 
       const params = new URLSearchParams({
         response_type: 'code',
@@ -253,14 +292,22 @@ export default function NowPlaying() {
       });
 
       const authUrl = `https://accounts.spotify.com/authorize?${params.toString()}`;
-      console.log('Authorization URL created:', authUrl);
+      console.log('Authorization URL created');
 
-      // Use the exposed API to open the auth popup
       if (window.electronAPI?.openAuthPopup) {
-        window.electronAPI.openAuthPopup(authUrl);
+        console.log('Opening auth popup via electronAPI...');
+        
+        setTimeout(() => {
+          const checkVerifier = localStorage.getItem(VERIFIER_KEY);
+          console.log('Verifier check after 5s:', checkVerifier ? 'still exists' : 'missing!');
+        }, 5000);
+        
+        await window.electronAPI.openAuthPopup(authUrl);
+        console.log('Auth window opened, waiting for response...');
       } else {
         console.error('Electron API not available. Cannot open auth popup.');
         setError('App not running in Electron or preload script failed.');
+        setIsLoading(false); 
       }
     } catch (err) {
       console.error('Login error:', err);
@@ -269,10 +316,98 @@ export default function NowPlaying() {
     }
   };
 
+  // Listen for messages
+  useEffect(() => {
+    const handleMessage = async (event: MessageEvent) => {
+      console.log('Message received:', event.data);
+      
+      // Validate message structure
+      if (event.data && event.data.type === 'spotify-auth' && event.data.code) {
+        console.log('Received auth code from message event:', event.data.code.substring(0, 5) + '...');
+        try {
+          const token = await exchangeCodeForToken(event.data.code);
+          await getCurrentTrack(token);
+        } catch (err) {
+          console.error('Error in auth flow:', err);
+        } finally {
+          setIsLoading(false);
+        }
+      }
+    };
+    
+    console.log('Setting up message event listener');
+    window.addEventListener('message', handleMessage);
+    return () => {
+      console.log('Removing message event listener');
+      window.removeEventListener('message', handleMessage);
+    };
+  }, [redirectUri]);
+
+  // Check URL parameters and existing tokens
+  useEffect(() => {
+    console.log('Component mount effect running, checking for auth code in URL...');
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    
+    // Log all query parameters for debugging
+    if (window.location.search) {
+      console.log('URL search params:', window.location.search);
+      params.forEach((value, key) => {
+        console.log(`URL param ${key}: ${value}`);
+      });
+    }
+    
+    const handleAuthentication = async () => {
+      if (code) {
+        try {
+          setIsLoading(true); // Show loading state while processing URL code
+          console.log('Code found in URL, exchanging for token:', code.substring(0, 5) + '...');
+          const token = await exchangeCodeForToken(code);
+          await getCurrentTrack(token);
+        } catch (error) {
+          console.error('Authentication process failed:', error);
+        } finally {
+          setIsLoading(false);
+        }
+      } else {
+        // Check if token already valid
+        const existingToken = localStorage.getItem('spotify_access_token');
+        const tokenExpiry = localStorage.getItem('spotify_token_expiry');
+        
+        console.log('Checking for existing token:', 
+          existingToken ? 'Token exists' : 'No token', 
+          tokenExpiry ? `Expires: ${new Date(Number(tokenExpiry)).toLocaleString()}` : 'No expiry'
+        );
+        
+        if (existingToken && tokenExpiry && Number(tokenExpiry) > Date.now()) {
+          setAccessToken(existingToken);
+          setIsLoading(true); // Show loading state while fetching track
+          getCurrentTrack(existingToken).finally(() => setIsLoading(false));
+        } else if (existingToken) {
+          // Refresh if expired
+          refreshToken();
+        } else {
+          console.log('No token found, user needs to log in');
+          setIsLoading(false);
+        }
+      }
+    };
+    
+    handleAuthentication();
+
+    // Polling for track updates
+    const interval = setInterval(() => {
+      const token = localStorage.getItem('spotify_access_token');
+      if (token) {
+        getCurrentTrack(token);
+      }
+    }, 5000);
+    
+    return () => clearInterval(interval);
+  }, []);
+
   // Render track info or fallback
-  const renderTrackInfo = () => {
-  console.log('renderTrackInfo called, currentTrack:', currentTrack);
-  
+const renderTrackInfo = () => {
   if (!currentTrack) {
     console.log('currentTrack is null or undefined');
     return (
@@ -285,7 +420,7 @@ export default function NowPlaying() {
       </div>
     );
   }
-  
+
   if (!currentTrack.item) {
     console.log('currentTrack.item is null or undefined');
     return (
@@ -298,59 +433,53 @@ export default function NowPlaying() {
       </div>
     );
   }
-  
-  
+
   const { item } = currentTrack;
-  console.log('Track item details:', {
-    name: item.name,
-    artists: item.artists?.map((artist: any) => artist.name).join(', '),
-    albumName: item.album?.name,
-    hasAlbumImage: !!item.album?.images?.[0]?.url
-  });
-    
-    return (
-      <div style={{
-        backgroundColor: 'rgba(0, 0, 0, 0.7)',
-        padding: '1.5rem',
-        borderRadius: '8px',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        maxWidth: '400px',
-      }}>
-        {item.album?.images?.[0]?.url && (
-          <img 
-            src={item.album.images[0].url} 
-            alt="Album Cover"
-            style={{
-              width: '200px',
-              height: '200px',
-              objectFit: 'cover',
-              borderRadius: '4px',
-              marginBottom: '1rem',
-            }}
-          />
-        )}
-        
-        <h2 style={{ margin: '0.5rem 0', fontSize: '1.5rem' }}>
-          {item.name}
-        </h2>
-        
-        <p style={{ margin: '0.25rem 0', fontSize: '1.1rem', opacity: 0.8 }}>
-          {item.artists?.map((artist: any) => artist.name).join(', ')}
-        </p>
-        
-        <p style={{ margin: '0.25rem 0', fontSize: '0.9rem', opacity: 0.6 }}>
-          {item.album?.name}
-        </p>
-      </div>
-    );
-  };
+
+  return (
+    <div style={{
+      padding: '1.5rem',
+      borderRadius: '8px',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      maxWidth: '400px',
+      color: 'white',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
+    }}>
+      {item.album?.images?.[0]?.url && (
+        <img 
+          src={item.album.images[0].url} 
+          alt="Album Cover"
+          style={{
+            width: '200px',
+            height: '200px',
+            objectFit: 'cover',
+            borderRadius: '4px',
+            marginBottom: '1rem',
+          }}
+        />
+      )}
+      
+      <h2 style={{ margin: '0.5rem 0', fontSize: '1.5rem' }}>
+        {item.name}
+      </h2>
+      
+      <p style={{ margin: '0.25rem 0', fontSize: '1.1rem', opacity: 0.9 }}>
+        {item.artists?.map((artist: any) => artist.name).join(', ')}
+      </p>
+      
+      <p style={{ margin: '0.25rem 0', fontSize: '0.9rem', opacity: 0.8 }}>
+        {item.album?.name}
+      </p>
+    </div>
+  );
+};
 
   return (
     <div
       style={{
-        backgroundImage: `url(${backgroundImage})`,
+        backgroundImage: `url("${backgroundImage}")`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
         minHeight: '100vh',
@@ -391,6 +520,14 @@ export default function NowPlaying() {
         >
           {isLoading ? 'Connecting...' : 'Connect to Spotify'}
         </button>
+      ) : isLoading ? (
+        <div style={{
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          padding: '1rem 2rem',
+          borderRadius: '8px',
+        }}>
+          Loading track information...
+        </div>
       ) : (
         renderTrackInfo()
       )}

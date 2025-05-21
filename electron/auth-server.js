@@ -63,7 +63,6 @@ const server = createServer((req, res) => {
             <h1>Authentication Successful!</h1>
             <p>You have successfully authenticated with Spotify.</p>
             <p>You can close this window and return to the application.</p>
-            <p><strong>Authorization code:</strong> ${query.code}</p>
             <button class="button" onclick="window.close()">Close Window</button>
           </div>
           <script>

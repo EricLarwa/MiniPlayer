@@ -1,68 +1,16 @@
-// preload.js - This file exposes selected Electron APIs to the renderer
 import { contextBridge, ipcRenderer } from 'electron';
 
-interface ElectronIpcRenderer {
-  send: (channel: string, data?: unknown) => void;
-  on: (channel: string, func: (...args: unknown[]) => void) => (() => void);
-  off: (channel: string, func: (...args: unknown[]) => void) => void;
-  removeListener: (channel: string, func: (...args: unknown[]) => void) => void;
-  removeAllListeners: (channel: string) => void;
-}
-
-interface ElectronApi {
-  ipcRenderer: ElectronIpcRenderer;
-}
-
 contextBridge.exposeInMainWorld('electronAPI', {
-  openAuthPopup: (url: string) => ipcRenderer.send('open-auth-popup', url)
+  // Expose the function to open authentication popup
+  openAuthPopup: (url: string) => ipcRenderer.invoke('open-auth-popup', url)
 });
 
-contextBridge.exposeInMainWorld(
-  'electron',
-  {
-    ipcRenderer: {
-      send: (channel: string, data?: unknown): void => {
-        // Whitelist channels to ensure security
-        const validChannels = ['start-auth', 'open-auth-popup'];
-        if (validChannels.includes(channel)) {
-          ipcRenderer.send(channel, data);
-        }
-      },
-      on: (channel: string, func: (...args: unknown[]) => void): (() => void) => {
-        const validChannels = ['auth-callback'];
-        if (validChannels.includes(channel)) {
-          const subscription = (_event: Electron.IpcRendererEvent, ...args: unknown[]) => func(event, ...args);
-          ipcRenderer.on(channel, subscription);
+// Listen for the auth code from the main process and forward it to the renderer
+ipcRenderer.on('spotify-auth-code', (_event, code) => {
+  console.log('Received auth code in preload, forwarding to renderer:', code);
+  
+  // Post the code to the window as a message event
+  window.postMessage({ type: 'spotify-auth', code: code }, '*');
+});
 
-          return () => {
-            ipcRenderer.removeListener(channel, subscription);
-          }
-        }
-        return () => {};
-      },
-
-      off: (channel: string, func: (...args: unknown[]) => void): void => {
-        const validChannels = ['auth-callback'];
-        if (validChannels.includes(channel)) {
-          ipcRenderer.off(channel, func);
-        }
-      },
-      removeListener: (channel: string, func: (...args: unknown[]) => void): void => {
-        const validChannels = ['auth-callback'];
-        if (validChannels.includes(channel)) {
-          ipcRenderer.removeListener(channel, func as any);
-        }
-      },
-      // Remove all listeners for the specified channel
-      removeAllListeners: (channel: string): void => {
-        const validChannels = ['auth-callback'];
-        if (validChannels.includes(channel)) {
-          ipcRenderer.removeAllListeners(channel);
-        }
-      }
-    } as ElectronIpcRenderer
-  } as ElectronApi
-);
-
-console.log('Preload script loaded');
-console.log("conetextzBridge?", typeof contextBridge);
+console.log('Preload script loaded, exposed electronAPI with openAuthPopup method');

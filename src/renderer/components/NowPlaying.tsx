@@ -1,18 +1,30 @@
 import { useEffect, useState } from 'react';
 import { generateCodeVerifier, generateCodeChallenge } from '../utils/pkce';
 
-// Extend the Window interface to include the optional electron property
+
 declare global {
+  interface ElectronAPI {
+    openAuthPopup?: (url: string) => void;
+    // add other methods if needed
+  }
+
   interface Window {
-    electron?: any;
+    electron?: {
+      ipcRenderer?: any;
+    };
+    electronAPI?: ElectronAPI;
   }
 }
 
 const CLIENT_ID = '2fa7700ed8e74c21945bf239c53330e1';
 const SCOPES = 'user-read-currently-playing user-read-playback-state';
 
-// Detect if we're running in Electron
-const IS_ELECTRON = !!window.electron || !!(window as any).require;
+// Detect if we're running in electronAPI
+const isElectron = () => {
+  return typeof window !== 'undefined' && !!window.electronAPI;
+};
+
+// Remove this block from the top-level scope. The Electron environment check is handled inside handleLogin.
 
 // Genre to image mapping
 const genreToImage: Record<string, string> = {
@@ -51,27 +63,34 @@ export default function NowPlaying() {
   // Initialize redirect URI
   useEffect(() => {
     const uri = 'http://127.0.0.1:8888/callback';
-    console.log('Setting redirect URI:', IS_ELECTRON ? '(Electron)' : '(Browser)', uri);
+    console.log('Setting redirect URI:', isElectron() ? '(Electron)' : '(Browser)', uri);
     setRedirectUri(uri);
   }, []);
 
   // Handle auth code from Electron IPC
   useEffect(() => {
-    if (!IS_ELECTRON || !window.electron?.ipcRenderer) return;
-    
-    console.log('Setting up auth-callback listener');
-    const ipc = window.electron.ipcRenderer;
+  if (!isElectron || !window.electron?.ipcRenderer) return;
 
-    const handleAuthCallback = (_event: any, authCode: string) => {
-      console.log('Received auth callback with code from IPC');
-      if (authCode) {
-        exchangeCodeForToken(authCode);
-      }
-    };
+  console.log('Setting up auth-callback listener');
+  const ipc = window.electron.ipcRenderer;
 
-    ipc.on('auth-callback', handleAuthCallback);
-    return () => ipc.removeListener('auth-callback', handleAuthCallback);
-  }, [redirectUri]); // Re-setup when redirectUri changes
+  const handleAuthCallback = (_event: any, authCode: string) => {
+    console.log('Received auth callback with code from IPC');
+    if (authCode) {
+      exchangeCodeForToken(authCode);
+    }
+  };
+
+  // Use the cleanup function returned by ipc.on
+  const removeListener = ipc.on('auth-callback', handleAuthCallback);
+  
+  return () => {
+    // Call the removeListener function directly
+    if (removeListener && typeof removeListener === 'function') {
+      removeListener();
+    }
+  };
+}, [redirectUri]);
 
   // Listen for messages from the callback window
   useEffect(() => {
@@ -204,15 +223,21 @@ export default function NowPlaying() {
     return () => clearInterval(interval);
   }, [accessToken]);
 
+  // NowPlaying.tsx
   const handleLogin = async () => {
+    if (!isElectron()) {
+      setError('Electron environment not detected. Cannot proceed with login.');
+      return;
+    }
+
     if (!redirectUri) {
       setError('Redirect URI not set. Please try again in a moment.');
       return;
     }
-    
+
     setIsLoading(true);
     setError(null);
-    
+
     try {
       const verifier = generateCodeVerifier();
       const challenge = await generateCodeChallenge(verifier);
@@ -229,18 +254,14 @@ export default function NowPlaying() {
 
       const authUrl = `https://accounts.spotify.com/authorize?${params.toString()}`;
       console.log('Authorization URL created:', authUrl);
-      const width = 450;
-      const height = 730;
-      const left = window.screen.width / 2 - width / 2;
-      const top = window.screen.height / 2 - height / 2;
 
-      window.open(
-        authUrl,
-        'Spotify Auth',
-        `width=${width},height=${height},top=${top},left=${left}`
-      );
-
-      console.log('Auth popup opened');
+      // Use the exposed API to open the auth popup
+      if (window.electronAPI?.openAuthPopup) {
+        window.electronAPI.openAuthPopup(authUrl);
+      } else {
+        console.error('Electron API not available. Cannot open auth popup.');
+        setError('App not running in Electron or preload script failed.');
+      }
     } catch (err) {
       console.error('Login error:', err);
       setError(`Login error: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -248,21 +269,44 @@ export default function NowPlaying() {
     }
   };
 
-  // Render the track information if available
+  // Render track info or fallback
   const renderTrackInfo = () => {
-    if (!currentTrack?.item) {
-      return (
-        <div style={{
-          backgroundColor: 'rgba(0, 0, 0, 0.7)',
-          padding: '1rem 2rem',
-          borderRadius: '8px',
-        }}>
-          No track currently playing
-        </div>
-      );
-    }
-    
-    const { item } = currentTrack;
+  console.log('renderTrackInfo called, currentTrack:', currentTrack);
+  
+  if (!currentTrack) {
+    console.log('currentTrack is null or undefined');
+    return (
+      <div style={{
+        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+        padding: '1rem 2rem',
+        borderRadius: '8px',
+      }}>
+        No track currently playing
+      </div>
+    );
+  }
+  
+  if (!currentTrack.item) {
+    console.log('currentTrack.item is null or undefined');
+    return (
+      <div style={{
+        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+        padding: '1rem 2rem',
+        borderRadius: '8px',
+      }}>
+        No track details available
+      </div>
+    );
+  }
+  
+  
+  const { item } = currentTrack;
+  console.log('Track item details:', {
+    name: item.name,
+    artists: item.artists?.map((artist: any) => artist.name).join(', '),
+    albumName: item.album?.name,
+    hasAlbumImage: !!item.album?.images?.[0]?.url
+  });
     
     return (
       <div style={{

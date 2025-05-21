@@ -1,13 +1,15 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "outDir": "src/dist",
     "module": "commonjs",
     "rootDir": "src",
+    "outDir": "dist",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "sourceMap": true
   },
-  "include": ["src/main.ts"]
+  "include": [
+    "src/main.ts",
+    "src/preload.ts",]
 }

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "author": "Eric Larwa | ericlarwa@gmail.com",
   "description": "A mini player for your music",
-  "main": "src/dist/main.js",
+  "main": "dist/main.js",
   "scripts": {
     "build:main": "tsc --project tsconfig.main.json",
     "build:renderer": "vite build",
@@ -14,11 +14,17 @@
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && npm run electron\""
   },
   "build": {
+    "appId": "com.ericlarwa.miniplayer",
+    "productName": "MiniPlayer",
+    "files":[
+      "dist/**/*",
+      "package.json"
+    ], 
+    "directories": {
+      "output": "release"
+    },
     "mac": {
       "target": "dir"
-    },
-    "win": {
-      "target": "nsis"
     }
   },
   "dependencies": {

@@ -14,5 +14,5 @@
       "@/*": ["src/renderer/*"]
     }
   },
-  "include": ["src/renderer/**/*"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
 }

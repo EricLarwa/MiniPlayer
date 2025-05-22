@@ -3,10 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const child_process = require('child_process');
 
-// Get the path to your electron.exe
-// This should point to your installed electron executable
 const getElectronExePath = () => {
-  // For development, use the electron from node_modules
   const devElectronPath = path.join(
     __dirname, 
     'node_modules', 
@@ -19,9 +16,7 @@ const getElectronExePath = () => {
     return devElectronPath;
   }
   
-  // Try to find installed electron
   try {
-    // This assumes electron is in your PATH
     const electronPath = child_process.execSync('where electron').toString().trim();
     if (fs.existsSync(electronPath)) {
       return electronPath;
@@ -34,13 +29,10 @@ const getElectronExePath = () => {
   return null;
 };
 
-// Get the path to your app.js (main process)
 const getAppPath = () => {
-  // This should point to your main process file
   return path.join(__dirname, 'electron', 'main.js');
 };
 
-// Register protocol handler manually (for development)
 const registerProtocolHandler = () => {
   const electronPath = getElectronExePath();
   const appPath = getAppPath();
@@ -54,11 +46,9 @@ const registerProtocolHandler = () => {
   console.log(`App path: ${appPath}`);
   
   try {
-    // For Windows, add registry entries
     if (process.platform === 'win32') {
       const Registry = require('winreg');
       
-      // Create the main protocol key
       const protocolKey = new Registry({
         hive: Registry.HKCU,
         key: '\\Software\\Classes\\spotify-auth'
@@ -68,14 +58,12 @@ const registerProtocolHandler = () => {
         protocolKey.set('', Registry.REG_SZ, 'URL:Spotify Auth Protocol', () => {
           protocolKey.set('URL Protocol', Registry.REG_SZ, '', () => {
             
-            // Create the command key
             const commandKey = new Registry({
               hive: Registry.HKCU,
               key: '\\Software\\Classes\\spotify-auth\\shell\\open\\command'
             });
             
             commandKey.create(() => {
-              // The command that will be executed when the protocol is activated
               const command = `"${electronPath}" "${appPath}" "%1"`;
               commandKey.set('', Registry.REG_SZ, command, () => {
                 console.log('Protocol handler registered successfully!');
@@ -92,7 +80,6 @@ const registerProtocolHandler = () => {
   }
 };
 
-// Run immediately if this script is executed directly
 if (require.main === module) {
   registerProtocolHandler();
 }

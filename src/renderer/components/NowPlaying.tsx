@@ -3,6 +3,7 @@ import { generateCodeVerifier, generateCodeChallenge } from '../utils/pkce';
 import { WindowControls } from './WindowControls';
 import { PlayerControls } from './PlayerControls';
 import './layout.css'
+import { c } from 'vite/dist/node/moduleRunnerTransport.d-DJ_mE5sf';
 
 declare global {
   interface ElectronAPI {
@@ -21,10 +22,42 @@ declare global {
   }
 }
 
+interface SpotifyArtist {
+  genres: string[];
+  // Add other properties you use from the artist response
+}
+
+
+interface SpotifyTrack {
+  item: {
+    id: string;
+    name: string;
+    artists: Array<{ id: string; name: string }>;
+    album: {
+      name: string;
+      images: Array<{ url: string }>;
+    };
+    // Add other track properties you need
+  };
+  // Add other currently playing response properties
+}
+
 const CLIENT_ID = '2fa7700ed8e74c21945bf239c53330e1';
 const SCOPES = 'user-read-currently-playing user-read-playback-state';
-const VERIFIER_KEY = 'spotify_verifier'; 
+const VERIFIER_KEY = 'spotify_verifier';
+const artistCache: Record<string, { data: SpotifyArtist; expiry: number }> = {};
+const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+let rateLimitExpiry = 0;
+let lastArtistRequestTime = 0;
+const MIN_ARTIST_INTERVAL = 5000;
+const RATE_LIMIT_BUFFER = 1000; // 1 second buffer
 
+let retry = 0;
+const MAX_RETRIES = 3;
+
+
+
+const getBackoffDelay = (attempt: number) => Math.min(1000 * Math.pow(2, attempt), 30000);
 // Detect if we're running in electronAPI
 const isElectron = () => {
   return typeof window !== 'undefined' && !!window.electronAPI;
@@ -47,9 +80,8 @@ const genreToImage: Record<string, string> = {
   rap: 'rap.png',
 };
 
-// Async function to resolve genre image
 const resolveGenreImage = async (genres: string[]): Promise<string> => {
-  // First try to find matching genre
+  // Try to find matching genre
   for (const genre of genres) {
     for (const key in genreToImage) {
       if (genre.toLowerCase().includes(key)) {
@@ -61,7 +93,7 @@ const resolveGenreImage = async (genres: string[]): Promise<string> => {
               return img;
             }
           }
-          // Fallback to Vite asset path
+          // Fallback
           const vitePath = `/assets/imgs/${genreToImage[key]}`;
           console.log(`Using Vite path for ${key}: ${vitePath}`);
           return vitePath;
@@ -82,7 +114,6 @@ const resolveGenreImage = async (genres: string[]): Promise<string> => {
         return defaultImg;
       }
     }
-    // Fallback to Vite asset path for default
     const viteDefaultPath = `/assets/imgs/${genreToImage.default1}`;
     console.log(`Using Vite path for default: ${viteDefaultPath}`);
     return viteDefaultPath;
@@ -110,17 +141,17 @@ export default function NowPlaying() {
   const [currentTrack, setCurrentTrack] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [redirectUri, setRedirectUri] = useState<string>('');
+  const [isFetchingArtist, setIsFetchingArtist] = useState<boolean>(false);
 
   useEffect(() => {
     const uri = 'http://127.0.0.1:8888/callback';
     console.log('Setting redirect URI:', isElectron() ? '(Electron)' : '(Browser)', uri);
     setRedirectUri(uri);
     
-    // End initial loading state after a short delay
     setTimeout(() => setIsLoading(false), 500);
   }, []);
 
-  // Exchange authorization code for access token
+  // Exchange authorization code for token
   const exchangeCodeForToken = async (code: string): Promise<string> => {
     console.log('Exchanging code for token, code length:', code.length);
     setIsLoading(true);
@@ -175,7 +206,7 @@ export default function NowPlaying() {
       localStorage.setItem('spotify_token_expiry', (Date.now() + data.expires_in * 1000).toString());
       
       setAccessToken(data.access_token);
-      localStorage.removeItem(VERIFIER_KEY); // Clean up
+      localStorage.removeItem(VERIFIER_KEY); 
       return data.access_token;
     } catch (err) {
       console.error('Token exchange error:', err);
@@ -187,81 +218,157 @@ export default function NowPlaying() {
     }
   };
 
-  // Fetch currently playing track and artist info
+  
+  const cleanCache = () => {
+    const now = Date.now();
+    Object.keys(artistCache).forEach(id => {
+      if (artistCache[id].expiry < now) {
+        delete artistCache[id];
+      }
+    });
+  };
+
+  const [lastTrackId, setLastTrackId] = useState<string | null>(null);
+
+  // Main track fetching function
   const getCurrentTrack = async (token: string) => {
     if (!token) {
-      console.error('No token provided to getCurrentTrack');
+      console.error('No token provided');
       return;
     }
-    
+  
     try {
-      const response = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+      // Only show loading if we don't have any track data 
+      if (!currentTrack) {
+        setIsLoading(true);
+      }
+  
+      cleanCache(); 
+  
+      const trackResponse = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
+        headers: { 'Authorization': `Bearer ${token}` }
       });
-      
-      if (response.status === 204) {
-        console.log('No track currently playing');
+  
+      if (trackResponse.status === 204) {
+        // No track playing
+        if (currentTrack) {
+          setIsLoading(true);
+        }
         setCurrentTrack(null);
         return;
       }
+  
+      if (!trackResponse.ok) {
+        throw new Error(`Track request failed: ${trackResponse.status}`);
+      }
+  
+      const trackData: SpotifyTrack = await trackResponse.json();
       
-      if (!response.ok) {
-        throw new Error(`API request failed: ${response.status}`);
+      // Check if track actually changed before showing loading
+      const trackChanged = currentTrack?.item?.id !== trackData.item?.id;
+      const hadPreviousTrack = currentTrack !== null;
+      
+      if (trackChanged && hadPreviousTrack) {
+        setIsLoading(true);
+        console.log('Track changed - showing loading state');
       }
       
-      const data = await response.json();
-      console.log('Track data received');
-      
-      // Update background image if artist genres are available
-      if (data.item?.artists?.length > 0) {
-        try {
-          const artistResponse = await fetch(`https://api.spotify.com/v1/artists/${data.item.artists[0].id}`, {
-            headers: {
-              'Authorization': `Bearer ${token}`
-            }
-          });
-
-              if (response.status === 429) {
-              // Handle rate limiting
-              const retryAfter = response.headers.get('Retry-After');
-              const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : 5000; // Default 5 seconds
-              console.log(`Rate limited. Waiting ${waitTime}ms before retry...`);
-              
-              await new Promise(resolve => setTimeout(resolve, waitTime));
-              
-              // Retry the request
-              return getCurrentTrack(token);
-            }
-
+      setCurrentTrack(trackData);
+  
+      // Handle artist data if available
+      if (trackData.item?.artists?.length > 0) {
+        const currentTrackId = trackData.item.id;
+        
+        if (currentTrackId !== lastTrackId) {
+          console.log('Track changed, fetching artist data');
+          setLastTrackId(currentTrackId);
           
-          if (artistResponse.ok) {
-            const artistData = await artistResponse.json();
-            if (artistData.genres && artistData.genres.length > 0) {
-              const backgroundImg = await resolveGenreImage(artistData.genres);
-              setBackgroundImage(backgroundImg);
-              console.log('Background image set based on artist genre:', backgroundImg);
+          const artistId = trackData.item.artists[0].id;
+          const now = Date.now();
+  
+          // Check cache first
+          if (artistCache[artistId] && artistCache[artistId].expiry > now) {
+            console.log('Using cached artist data');
+            const { genres } = artistCache[artistId].data;
+            if (genres?.length > 0) {
+              const bgImage = await resolveGenreImage(genres);
+              setBackgroundImage(bgImage);
             }
-            console.log("Genres:", artistData.genres)
+            return;
           }
-          console.log('Artist data fetched successfully');
-        } catch (artistError) {
-          console.error('Failed to fetch artist data:');
+  
+          // Rate limit
+          if (now < rateLimitExpiry) {
+            console.log(`Rate limited until ${new Date(rateLimitExpiry).toLocaleTimeString()}`);
+            return;
+          }
+  
+          // Minimum interval check
+          if (now - lastArtistRequestTime < MIN_ARTIST_INTERVAL) {
+            console.log(`Waiting ${MIN_ARTIST_INTERVAL/1000}s between artist requests`);
+            return;
+          }
+
+          setIsFetchingArtist(true);
+          lastArtistRequestTime = now;
+  
+          try {
+            console.log(`Fetching artist data for: ${artistId}`);
+            const artistResponse = await fetch(`https://api.spotify.com/v1/artists/${artistId}`, {
+              headers: { 'Authorization': `Bearer ${token}` }
+            });
+  
+            if (artistResponse.status === 429) {
+              const retryAfter = parseInt(artistResponse.headers.get('Retry-After') || '10');
+              rateLimitExpiry = now + (retryAfter * 1000);
+              console.warn(`Rate limited. Waiting ${retryAfter} seconds`);
+              return;
+            }
+  
+            if (!artistResponse.ok) {
+              throw new Error(`Artist request failed: ${artistResponse.status}`);
+            }
+  
+            const artistData: SpotifyArtist = await artistResponse.json();
+            
+            // Cache the artist data
+            artistCache[artistId] = {
+              data: artistData,
+              expiry: now + CACHE_TTL
+            };
+  
+            if (artistData.genres?.length > 0) {
+              const bgImage = await resolveGenreImage(artistData.genres);
+              setBackgroundImage(bgImage);
+            }
+          } catch (err) {
+            console.error('Artist fetch error:', err);
+          } finally {
+            setIsFetchingArtist(false);
+          }
+        } else {
+          console.log('Same track playing, skipping artist fetch');
         }
       }
-      
-      setCurrentTrack(data);
     } catch (error) {
-      console.error('Failed to fetch current track:', error);
+      console.error('Track fetch error:', error);
       if (error instanceof Error && error.message.includes('401')) {
-        // Token expired, try to refresh
         refreshToken();
       }
+    } finally {
+      setIsLoading(false);
     }
-  };
+  }; 
+  
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const token = localStorage.getItem('spotify_access_token');
+      if (token) getCurrentTrack(token);
+    }, 30000);
+    
+    return () => clearInterval(interval);
+  }, []);
 
-  // Refresh the Spotify access token using the stored refresh token
   const refreshToken = async () => {
     const refresh_token = localStorage.getItem('spotify_refresh_token');
     if (!refresh_token) {
@@ -302,11 +409,9 @@ export default function NowPlaying() {
         localStorage.setItem('spotify_refresh_token', data.refresh_token);
       }
   
-      // Fetch the current track with the new token
       getCurrentTrack(data.access_token);
     } catch (err) {
       console.error('Token refresh error:', err);
-      setError(`Failed to refresh token: ${err instanceof Error ? err.message : 'Unknown error'}`);
       setAccessToken(null);
     } finally {
       setIsLoading(false);
@@ -398,13 +503,12 @@ export default function NowPlaying() {
     };
   }, [redirectUri]);
 
-  // Check URL parameters and existing tokens
+  // Check URL parameters and tokens
   useEffect(() => {
     console.log('Component mount effect running, checking for auth code in URL...');
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     
-    // Log all query parameters for debugging
     if (window.location.search) {
       console.log('URL search params:', window.location.search);
       params.forEach((value, key) => {
@@ -415,7 +519,7 @@ export default function NowPlaying() {
     const handleAuthentication = async () => {
       if (code) {
         try {
-          setIsLoading(true); // Show loading state while processing URL code
+          setIsLoading(true);
           console.log('Code found in URL, exchanging for token:', code.substring(0, 5) + '...');
           const token = await exchangeCodeForToken(code);
           await getCurrentTrack(token);
@@ -425,7 +529,6 @@ export default function NowPlaying() {
           setIsLoading(false);
         }
       } else {
-        // Check if token already valid
         const existingToken = localStorage.getItem('spotify_access_token');
         const tokenExpiry = localStorage.getItem('spotify_token_expiry');
         
@@ -436,10 +539,9 @@ export default function NowPlaying() {
         
         if (existingToken && tokenExpiry && Number(tokenExpiry) > Date.now()) {
           setAccessToken(existingToken);
-          setIsLoading(true); // Show loading state while fetching track
+          setIsLoading(true); 
           getCurrentTrack(existingToken).finally(() => setIsLoading(false));
         } else if (existingToken) {
-          // Refresh if expired
           refreshToken();
         } else {
           console.log('No token found, user needs to log in');
@@ -450,13 +552,12 @@ export default function NowPlaying() {
     
     handleAuthentication();
 
-    // Polling for track updates
     const interval = setInterval(() => {
       const token = localStorage.getItem('spotify_access_token');
       if (token) {
         getCurrentTrack(token);
       }
-    }, 10000);
+    }, 15000);
     
     return () => clearInterval(interval);
   }, []);
@@ -491,21 +592,20 @@ const renderTrackInfo = () => {
 
   return (
     <div style={{
-  display: 'flex',           // Horizontal layout
-  alignItems: 'center',      // Vertically center items
-  gap: '20px',               // Space between album art and text
+  display: 'flex',   
+  alignItems: 'center',    
+  gap: '20px',               
   padding: '1.5rem',
   borderRadius: '8px',
   maxWidth: '500px',  
   color: 'white',
 }}>
-  {/* Album Cover (Left) */}
   {item.album?.images?.[0]?.url && (
     <img 
       src={item.album.images[0].url} 
       alt="Album Cover"
       style={{
-        width: '150px',      // Slightly smaller for side-by-side
+        width: '150px',     
         height: '150px',
         objectFit: 'cover',
         borderRadius: '4px'
@@ -513,7 +613,6 @@ const renderTrackInfo = () => {
     />
   )}
   
-  {/* Track Info (Right - Stacked) */}
   <div style={{
     display: 'flex',
     flexDirection: 'column',
@@ -548,13 +647,10 @@ const renderTrackInfo = () => {
   );
 };
 
-  // NowPlaying.tsx
 return (
   <div className="player-container" style={{ backgroundImage: `url("${backgroundImage}")` }}>
-    {/* Add Window Controls */}
     <WindowControls />
 
-    {/* Your existing content */}
     <div className="content-wrapper">
       {error && (
         <div className="error-message">
@@ -562,31 +658,25 @@ return (
         </div>
       )}
       
-{!accessToken ? (
-  <button
-    onClick={handleLogin}
-    disabled={isLoading || !redirectUri}
-    className={`login-button ${(isLoading || !redirectUri) ? 'disabled' : ''}`}
-  >
-    {isLoading ? (
-      <span>Connecting<span className="loading-dots"></span></span>
-    ) : (
-      'Connect to Spotify'
-    )}
-  </button>
-    ) : isLoading ? (
-      <div className="loading-message">
-        <div className="loading-spinner"></div>
-        Loading track information...
+      {!accessToken ? (
+        <button
+          onClick={handleLogin}
+          disabled={isLoading || !redirectUri}
+          className={`login-button ${(isLoading || !redirectUri) ? 'disabled' : ''}`}
+        >
+          {isLoading ? (
+            <span>Connecting<span className="loading-dots"></span></span>
+          ) : (
+            'Connect to Spotify'
+          )}
+        </button>
+          ) : (
+            <>
+              {renderTrackInfo()}
+              <PlayerControls />
+            </>
+          )}
       </div>
-    ) : (
-      <>
-        {renderTrackInfo()}
-        {/* Add Player Controls */}
-        <PlayerControls />
-      </>
-    )}
-  </div>
-</div>
-);
+    </div>
+  );
 }

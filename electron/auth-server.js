@@ -1,4 +1,3 @@
-// auth-server.js - Simple server to handle OAuth callbacks
 const { createServer } = require('http');
 const { parse } = require('url');
 const port = 8888;
@@ -132,7 +131,7 @@ const server = createServer((req, res) => {
         </html>
       `);
     } else {
-      // Send a generic response for other callback scenarios
+      // Send a generic response 
       res.writeHead(400, { 'Content-Type': 'text/html' });
       res.end(`
         <!DOCTYPE html>

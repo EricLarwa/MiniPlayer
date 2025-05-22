@@ -1,12 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { Minimize } from 'lucide-react';
 
 
 contextBridge.exposeInMainWorld('electronAPI', {
   openAuthPopup: (url: string) => ipcRenderer.invoke('open-auth-popup', url),
   getImagePath: (imageName: string) => ipcRenderer.invoke('get-image-path', imageName),
-  minimize: () => ipcRenderer.invoke('minimize-window'), // Changed from 'minimize' to 'minimize-window'
-  close: () => ipcRenderer.invoke('close-window'), // Changed from 'close' to 'close-window'
+  minimize: () => ipcRenderer.invoke('minimize-window'), 
+  close: () => ipcRenderer.invoke('close-window'), 
 });
 
 ipcRenderer.on('spotify-auth-code', (_event, code) => {

@@ -32,7 +32,7 @@ function createWindow() {
   });
 }
 
-// Add this function to create safe image paths
+// create safe image paths
 function getImagePath(imageName: string): string {
   const imageDir = process.env.NODE_ENV === 'development'
     ? path.join(__dirname, '../../src/renderer/assets/imgs')
@@ -54,7 +54,6 @@ function getImagePath(imageName: string): string {
   return image.toDataURL();
 }
 
-// Start the local callback server
 function startCallbackServer() {
   // Close any existing server
   if (callbackServer) {
@@ -65,12 +64,12 @@ function startCallbackServer() {
     console.log(`Callback server received request: ${req.url}`);
     
     if (req.url?.startsWith('/callback')) {
-      // Parse the authorization code from URL
+      // Parse
       const urlParams = new URLSearchParams(req.url.split('?')[1]);
       const code = urlParams.get('code');
       const error = urlParams.get('error');
       
-      // Send a simple HTML response
+      // Send response
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(`
         <!DOCTYPE html>
@@ -98,13 +97,12 @@ function startCallbackServer() {
         </html>
       `);
       
-      // Also send the code to the main window
+      // code to the main window
       if (code && mainWindow) {
         console.log('Sending auth code to main window');
         mainWindow.webContents.send('spotify-auth-code', code);
       }
       
-      // Close the auth window if it's still open
       if (authWindow) {
         authWindow.close();
         authWindow = null;
@@ -124,7 +122,7 @@ function startCallbackServer() {
   });
 }
 
-// Function to open the auth popup window
+// open the auth popup window
 function openAuthWindow(authUrl: string) {
   if (authWindow) {
     authWindow.close();
@@ -143,7 +141,6 @@ function openAuthWindow(authUrl: string) {
 
   authWindow.loadURL(authUrl);
   
-  // Debug: Log navigation events
   authWindow.webContents.on('will-navigate', (event, url) => {
     console.log('Auth window will navigate to:', url);
   });
@@ -185,7 +182,6 @@ app.on('activate', () => {
   }
 });
 
-// Add this to your ipcMain handlers
 ipcMain.handle('get-image-path', (event, imageName) => {
   return getImagePath(imageName);
 });

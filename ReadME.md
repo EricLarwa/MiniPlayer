@@ -49,7 +49,7 @@ A minimal Electron desktop application that:
 ## 🚀 Installation
 ```bash
 # 1. Clone repository
-git clone https://github.com/yourusername/spotify-mini-player.git
+git clone https://github.com/EricLarwa/MiniPlayer.git
 
 # 2. Install dependencies
 npm install

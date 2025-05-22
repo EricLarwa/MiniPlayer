@@ -1,9 +1,15 @@
 import { useEffect, useState } from 'react';
 import { generateCodeVerifier, generateCodeChallenge } from '../utils/pkce';
+import { WindowControls } from './WindowControls';
+import { PlayerControls } from './PlayerControls';
+import './layout.css'
 
 declare global {
   interface ElectronAPI {
     openAuthPopup?: (url: string) => void;
+    getImagePath?: (imageName: string) => Promise<string>; 
+    minimize?: () => void;
+    close?: () => void;
     // add other methods if needed
   }
 
@@ -24,31 +30,67 @@ const isElectron = () => {
   return typeof window !== 'undefined' && !!window.electronAPI;
 };
 
-// Genre to image mapping - preserving this as requested
 const genreToImage: Record<string, string> = {
-  alternative: '/assets/imgs/alternative.jpg',
-  country: '/assets/imgs/country.jpg',
-  electronic: '/assets/imgs/electronic.avif',
-  indie: '/assets/imgs/indie.png',
-  metal: '/assets/imgs/metal.jpg',
-  randb: '/assets/imgs/r-and-b.jpg',
-  pop: '/assets/imgs/pop.jpg',
-  rock: '/assets/imgs/rock.jpg',
-  jazz: '/assets/imgs/jazz.jpg',
-  hiphop: '/assets/imgs/hip-hop.avif',
-  edm: '/assets/imgs/edm.avif',
-  default: '/assets/imgs/default.jpg',
-  rap: '/assets/imgs/rapc.jpg',
+  alternative: 'alternative.jpg',
+  country: 'country.jpg',
+  electronic: 'electronic.avif',
+  indie: 'indie.png',
+  metal: 'metal.jpg',
+  'r&b': 'r-and-b.jpg',
+  pop: 'pop.jpg',
+  rock: 'rock.png',
+  jazz: 'jazz.jpg',
+  hiphop: 'hip-hop.avif',
+  edm: 'edm.avif',
+  default: 'assets/imgs/default.png',
+  default1: 'assets/imgs/default.png',
+  rap: 'rap.png',
 };
 
-// Preserving resolveGenreImage as requested
-const resolveGenreImage = (genres: string[]): string => {
+// Async function to resolve genre image
+const resolveGenreImage = async (genres: string[]): Promise<string> => {
+  // First try to find matching genre
   for (const genre of genres) {
     for (const key in genreToImage) {
-      if (genre.toLowerCase().includes(key)) return genreToImage[key];
+      if (genre.toLowerCase().includes(key)) {
+        try {
+          if (window.electronAPI?.getImagePath) {
+            const img = await window.electronAPI.getImagePath(genreToImage[key]);
+            if (img) {
+              console.log(`Found genre image for ${key}: ${img.substring(0, 30)}...`);
+              return img;
+            }
+          }
+          // Fallback to Vite asset path
+          const vitePath = `/assets/imgs/${genreToImage[key]}`;
+          console.log(`Using Vite path for ${key}: ${vitePath}`);
+          return vitePath;
+        } catch (error) {
+          console.error(`Error loading image for ${key}:`, error);
+          continue; // Try next genre
+        }
+      }
     }
   }
-  return genreToImage.default;
+  
+  // If no genre matched, use default
+  try {
+    if (window.electronAPI?.getImagePath) {
+      const defaultImg = await window.electronAPI.getImagePath(genreToImage.default1);
+      if (defaultImg) {
+        console.log(`Using default image: ${defaultImg.substring(0, 30)}...`);
+        return defaultImg;
+      }
+    }
+    // Fallback to Vite asset path for default
+    const viteDefaultPath = `/assets/imgs/${genreToImage.default1}`;
+    console.log(`Using Vite path for default: ${viteDefaultPath}`);
+    return viteDefaultPath;
+  } catch (error) {
+    console.error('Error loading default image:', error);
+    // Ultimate fallback
+    return 'assets/imgs/default.jpg';
+  }
 };
 
 interface SpotifyTokenResponse {
@@ -180,11 +222,24 @@ export default function NowPlaying() {
               'Authorization': `Bearer ${token}`
             }
           });
+
+              if (response.status === 429) {
+              // Handle rate limiting
+              const retryAfter = response.headers.get('Retry-After');
+              const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : 5000; // Default 5 seconds
+              console.log(`Rate limited. Waiting ${waitTime}ms before retry...`);
+              
+              await new Promise(resolve => setTimeout(resolve, waitTime));
+              
+              // Retry the request
+              return getCurrentTrack(token);
+            }
+
           
           if (artistResponse.ok) {
             const artistData = await artistResponse.json();
             if (artistData.genres && artistData.genres.length > 0) {
-              const backgroundImg = resolveGenreImage(artistData.genres);
+              const backgroundImg = await resolveGenreImage(artistData.genres);
               setBackgroundImage(backgroundImg);
               console.log('Background image set based on artist genre:', backgroundImg);
             }
@@ -401,7 +456,7 @@ export default function NowPlaying() {
       if (token) {
         getCurrentTrack(token);
       }
-    }, 5000);
+    }, 10000);
     
     return () => clearInterval(interval);
   }, []);
@@ -411,8 +466,7 @@ const renderTrackInfo = () => {
   if (!currentTrack) {
     console.log('currentTrack is null or undefined');
     return (
-      <div style={{
-        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+      <div className="no-track" style={{
         padding: '1rem 2rem',
         borderRadius: '8px',
       }}>
@@ -424,8 +478,7 @@ const renderTrackInfo = () => {
   if (!currentTrack.item) {
     console.log('currentTrack.item is null or undefined');
     return (
-      <div style={{
-        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+      <div className="no-track"style={{
         padding: '1rem 2rem',
         borderRadius: '8px',
       }}>
@@ -438,99 +491,102 @@ const renderTrackInfo = () => {
 
   return (
     <div style={{
-      padding: '1.5rem',
-      borderRadius: '8px',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      maxWidth: '400px',
-      color: 'white',
-      boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
+  display: 'flex',           // Horizontal layout
+  alignItems: 'center',      // Vertically center items
+  gap: '20px',               // Space between album art and text
+  padding: '1.5rem',
+  borderRadius: '8px',
+  maxWidth: '500px',  
+  color: 'white',
+}}>
+  {/* Album Cover (Left) */}
+  {item.album?.images?.[0]?.url && (
+    <img 
+      src={item.album.images[0].url} 
+      alt="Album Cover"
+      style={{
+        width: '150px',      // Slightly smaller for side-by-side
+        height: '150px',
+        objectFit: 'cover',
+        borderRadius: '4px'
+      }}
+    />
+  )}
+  
+  {/* Track Info (Right - Stacked) */}
+  <div style={{
+    display: 'flex',
+    flexDirection: 'column',
+    flex: 1,                 
+    gap: '0.5rem'            
+  }}>
+    <h2 className="track-title" style={{
+      margin: 0,
+      fontSize: '1.5rem',
+      fontWeight: 'bold'
     }}>
-      {item.album?.images?.[0]?.url && (
-        <img 
-          src={item.album.images[0].url} 
-          alt="Album Cover"
-          style={{
-            width: '200px',
-            height: '200px',
-            objectFit: 'cover',
-            borderRadius: '4px',
-            marginBottom: '1rem',
-          }}
-        />
-      )}
-      
-      <h2 style={{ margin: '0.5rem 0', fontSize: '1.5rem' }}>
-        {item.name}
-      </h2>
-      
-      <p style={{ margin: '0.25rem 0', fontSize: '1.1rem', opacity: 0.9 }}>
-        {item.artists?.map((artist: any) => artist.name).join(', ')}
-      </p>
-      
-      <p style={{ margin: '0.25rem 0', fontSize: '0.9rem', opacity: 0.8 }}>
-        {item.album?.name}
-      </p>
-    </div>
+      {item.name}
+    </h2>
+
+    <h3 className="track-artists" style={{
+      margin: 0,
+      fontSize: '1.2rem',
+      opacity: 0.9
+    }}>
+      {item.artists?.map((artist: any) => artist.name).join(', ')}
+    </h3>
+
+    <p className="track-album" style={{
+      margin: 0,
+      fontSize: '0.9rem',
+      opacity: 0.8
+    }}>
+      {item.album?.name}
+    </p>
+  </div>
+</div>
   );
 };
 
-  return (
-    <div
-      style={{
-        backgroundImage: `url("${backgroundImage}")`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        minHeight: '100vh',
-        color: 'white',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        transition: 'background-image 1s ease-in-out',
-      }}
-    >
+  // NowPlaying.tsx
+return (
+  <div className="player-container" style={{ backgroundImage: `url("${backgroundImage}")` }}>
+    {/* Add Window Controls */}
+    <WindowControls />
+
+    {/* Your existing content */}
+    <div className="content-wrapper">
       {error && (
-        <div style={{ 
-          backgroundColor: 'rgba(255, 0, 0, 0.7)', 
-          padding: '1rem', 
-          borderRadius: '8px',
-          marginBottom: '1rem',
-          maxWidth: '400px',
-        }}>
+        <div className="error-message">
           {error}
         </div>
       )}
       
-      {!accessToken ? (
-        <button
-          onClick={handleLogin}
-          disabled={isLoading || !redirectUri}
-          style={{
-            padding: '1rem 2rem',
-            fontSize: '1.2rem',
-            borderRadius: '8px',
-            backgroundColor: '#1DB954',
-            color: '#fff',
-            border: 'none',
-            cursor: isLoading || !redirectUri ? 'default' : 'pointer',
-            opacity: isLoading || !redirectUri ? 0.7 : 1,
-          }}
-        >
-          {isLoading ? 'Connecting...' : 'Connect to Spotify'}
-        </button>
-      ) : isLoading ? (
-        <div style={{
-          backgroundColor: 'rgba(0, 0, 0, 0.7)',
-          padding: '1rem 2rem',
-          borderRadius: '8px',
-        }}>
-          Loading track information...
-        </div>
-      ) : (
-        renderTrackInfo()
-      )}
-    </div>
-  );
+{!accessToken ? (
+  <button
+    onClick={handleLogin}
+    disabled={isLoading || !redirectUri}
+    className={`login-button ${(isLoading || !redirectUri) ? 'disabled' : ''}`}
+  >
+    {isLoading ? (
+      <span>Connecting<span className="loading-dots"></span></span>
+    ) : (
+      'Connect to Spotify'
+    )}
+  </button>
+    ) : isLoading ? (
+      <div className="loading-message">
+        <div className="loading-spinner"></div>
+        Loading track information...
+      </div>
+    ) : (
+      <>
+        {renderTrackInfo()}
+        {/* Add Player Controls */}
+        <PlayerControls />
+      </>
+    )}
+  </div>
+</div>
+);
 }

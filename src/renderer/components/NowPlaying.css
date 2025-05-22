@@ -1,0 +1,81 @@
+/* NowPlaying.css */
+.player-container {
+  background-size: contain;
+  background-position: center;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  transition: background-image 1s ease-in-out;
+}
+
+.error-message {
+  background-color: rgba(255, 0, 0, 0.7);
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  max-width: 400px;
+  height: 100%;
+}
+
+.login-button {
+  padding: 1rem 2rem;
+  font-size: 1.2rem;
+  border-radius: 8px;
+  background-color: #1DB954;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  opacity: 1;
+  transition: opacity 0.2s;
+}
+
+.login-button.disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.loading-message {
+  background-color: rgba(0, 0, 0, 0.7);
+  padding: 1rem 2rem;
+  border-radius: 8px;
+}
+
+/* Add to NowPlaying.css */
+.track-info-container {
+  padding: 1.5rem;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  max-width: 400px;
+  color: white;
+}
+
+.track-info-container img {
+  width: 20px;
+  height: 20px;
+  object-fit: cover;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+
+.track-info-container h2 {
+  margin: 0.5rem 0;
+  font-size: 1.5rem;
+}
+
+.track-info-container p {
+  margin: 0.25rem 0;
+}
+
+.track-artists {
+  font-size: 1.1rem;
+  opacity: 0.9;
+}
+
+.track-album {
+  font-size: 0.9rem;
+  opacity: 0.8;
+}

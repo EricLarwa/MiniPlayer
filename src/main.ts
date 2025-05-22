@@ -1,7 +1,8 @@
 import { app, BrowserWindow, session, ipcMain } from 'electron';
 import * as path from 'path';
-import * as url from 'url';
+import { nativeImage } from 'electron';
 import * as http from 'http';
+import fs from 'fs';
 
 let mainWindow: BrowserWindow | null = null;
 let authWindow: BrowserWindow | null = null;
@@ -11,6 +12,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    frame: false,
+    transparent: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -27,6 +30,28 @@ function createWindow() {
       callbackServer = null;
     }
   });
+}
+
+// Add this function to create safe image paths
+function getImagePath(imageName: string): string {
+  const imageDir = process.env.NODE_ENV === 'development'
+    ? path.join(__dirname, '../../src/renderer/assets/imgs')
+    : path.join(process.resourcesPath, 'assets/imgs');
+
+  const imagePath = path.join(imageDir, imageName);
+
+  if (!fs.existsSync(imagePath)) {
+    console.error(`Image not found: ${imagePath}`);
+    return '';
+  }
+
+  const image = nativeImage.createFromPath(imagePath);
+  if (image.isEmpty()) {
+    console.error(`Failed to load image: ${imagePath}`);
+    return '';
+  }
+
+  return image.toDataURL();
 }
 
 // Start the local callback server
@@ -158,4 +183,17 @@ app.on('activate', () => {
     createWindow();
     startCallbackServer();
   }
+});
+
+// Add this to your ipcMain handlers
+ipcMain.handle('get-image-path', (event, imageName) => {
+  return getImagePath(imageName);
+});
+
+ipcMain.handle('minimize-window', () => {
+  mainWindow?.minimize();
+});
+
+ipcMain.handle('close-window', () => {
+  mainWindow?.close();
 });
